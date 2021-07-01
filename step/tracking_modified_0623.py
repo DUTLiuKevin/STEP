@@ -1,12 +1,16 @@
+# Modified version of tracking. 改善识别效率，改善程序反馈，增加角度参数设置
+# @author:xiaoye
+# 2021/06/23
+
 import copy
 from math import sqrt
 import numpy as np
 from scipy.ndimage.measurements import center_of_mass
 from scipy.spatial.distance import pdist, squareform
 from skimage.segmentation import relabel_sequential
+from collections import Counter as cC
 
-
-def track(labeled_maps: np.ndarray, precip_data: np.ndarray, tau: float, phi: float, km: float, degree: float,
+def track(labeled_maps: np.ndarray, precip_data: np.ndarray, tau: float, phi: float, km: float, degree:float,
           test: bool = False) -> np.ndarray:
     """Tracks rainstorm events over time by linking identified storms across consecutive time steps.
     :param labeled_maps: the identified storms returned by the identification algorithm, given as an array of
@@ -16,8 +20,8 @@ def track(labeled_maps: np.ndarray, precip_data: np.ndarray, tau: float, phi: fl
     :param tau: the threshold at which a storm is considered similar enough to another to possibly be linked through
     time, given as a float.
     :param phi: the constant to be used in computing similarity between storms, given as a float.
-    :param km: the number of grid cells equivalent to 120km in the maps, given as a float.
-    :param degree: the degree of vectors of storms displacement at time t and time t-1, given as a float with unit of rad.
+    :param km: the number of grid cells equivalent to 120km in the maps, given as a float. (unit: pixel)
+    :param degree: the degree of vectors of displacement between: 1) prev and curr storms, 2) pred and prev storm (unit: rad)
     :param test: turn on/off optional testing printouts to help tune parameters, given as a bool with default value
     False.
     :return: a Time x Rows x Cols array containing the identified storms, now tracked through time.
@@ -114,12 +118,13 @@ def track(labeled_maps: np.ndarray, precip_data: np.ndarray, tau: float, phi: fl
                             if curr_prev_magnitude < km:
                                 if test:
                                     print('Distance {0} (pixel) < {1}.'.format(curr_prev_magnitude, km))
-                                else:
-                                    print('Distance {0} (pixel) >= {1}.'.format(curr_prev_magnitude, km))
+
                                 # update the best matched storm information
                                 max_size = prev_size
                                 best_matched_storm = storm
                             else:
+                                if test:
+                                    print('Distance {0} (pixel) >= {1}.'.format(curr_prev_magnitude, km))
                                 # otherwise, if the angle between this displacement vector and the previous displacement
                                 # vector associated with that label is less than 120 degrees and it's possible to find
                                 # this angle
@@ -137,7 +142,6 @@ def track(labeled_maps: np.ndarray, precip_data: np.ndarray, tau: float, phi: fl
                                     vec_angle = 1
                                 if test:
                                     print(f'Angle: {vec_angle}')
-                                # add the degree threshold in the function input
                                 if vec_angle < degree:    # equivalent to 120 degree direction difference
                                     # update the best matched storm information
                                     if test:
@@ -201,12 +205,21 @@ def similarity(curr_label_locs: np.ndarray, prev_storm_locs: np.ndarray, curr_ra
     # do the same for the storm weightings in the previous time slice
     prev_coors = np.argwhere(prev_weighted_locs)
 
+    # 计算两个array的并集
+    ac = cC([tuple(x) for x in curr_coors])
+    bc = cC([tuple(x) for x in prev_coors])
+    union = sorted([list(x) for x, v in (ac & bc).items() for _ in range(v)])
+    # conver the list to array
+    union = np.array(union)
+    # 如果没有交集 返回0
+    if union.size == 0:
+        return 0
     # merge the two arrays
-    merged_coors = np.concatenate((curr_coors, prev_coors), axis=0)
+    # merged_coors = np.concatenate((curr_coors, prev_coors), axis=0)
 
     # and find their union
-    union_helper = [tuple(row) for row in merged_coors]
-    union = np.unique(union_helper, axis=0)
+    # union_helper = [tuple(row) for row in merged_coors]
+    # union = np.unique(union_helper, axis=0)
     # https://stackoverflow.com/a/31097302
 
     # place the weights of these locations for each storm in its appropriate time slice (even if they include 0's)

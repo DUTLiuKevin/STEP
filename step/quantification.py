@@ -32,9 +32,9 @@ def quantify(tracked_storms: np.ndarray, precip_data: np.ndarray, lat_data: np.n
     averages = get_average(tracked_storms, precip_data)
 
     # and find the central location for each storm in each time slice
-    central_locs = get_central_loc(tracked_storms, precip_data, lat_data, long_data)
+    # central_locs = get_central_loc(tracked_storms, precip_data, lat_data, long_data)
 
-    return durations, sizes, averages, central_locs
+    return durations, sizes, averages# , central_locs
 
 
 def get_duration(storms: np.ndarray, time_interval: float) -> np.ndarray:

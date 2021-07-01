@@ -4,6 +4,7 @@ from scipy.ndimage.measurements import label
 from scipy.ndimage.morphology import generate_binary_structure
 from skimage import morphology
 from skimage.segmentation import relabel_sequential
+from tqdm import tqdm
 
 
 def identify(data: np.ndarray, morph_structure: np.ndarray) -> np.ndarray:

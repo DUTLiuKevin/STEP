@@ -1,9 +1,13 @@
+# Fix tracking algorithm: 修改similarity计算方法, 添加degree用来控制storm的夹角
+
+
 import copy
 from math import sqrt
 import numpy as np
 from scipy.ndimage.measurements import center_of_mass
 from scipy.spatial.distance import pdist, squareform
 from skimage.segmentation import relabel_sequential
+from sklearn.metrics.pairwise import euclidean_distances
 
 
 def track(labeled_maps: np.ndarray, precip_data: np.ndarray, tau: float, phi: float, km: float, degree: float,
@@ -23,6 +27,7 @@ def track(labeled_maps: np.ndarray, precip_data: np.ndarray, tau: float, phi: fl
     :return: a Time x Rows x Cols array containing the identified storms, now tracked through time.
     """
 
+    global vec_angle
     shape = labeled_maps.shape
     num_time_slices = shape[0]
 
@@ -71,7 +76,7 @@ def track(labeled_maps: np.ndarray, precip_data: np.ndarray, tau: float, phi: fl
                 # then for every labeled storm in the previous time index
                 for storm in previous_storms:
 
-                    if storm == 0: # 如果是背景0 就跳过0并继续
+                    if storm == 0:  # 如果是背景0 就跳过0并继续
                         continue
 
                     # find where the storm exists in the appropriate time slice
@@ -100,45 +105,45 @@ def track(labeled_maps: np.ndarray, precip_data: np.ndarray, tau: float, phi: fl
                             # and its intensity-weighted centroid
                             prev_centroid = center_of_mass(prev_storm_precip)
 
-
                             curr_prev_displacement = displacement(curr_centroid, prev_centroid)
                             curr_prev_magnitude = magnitude(curr_prev_displacement)
 
                             # if test:
-                                # print(f'Current weighted centroid: {curr_centroid}')
-                                # print(f'Previous weighted centroid: {prev_centroid}')
-                                # print(f'Displacement: {curr_prev_displacement}')
-                                # print(f'Distance (pixel): {curr_prev_magnitude}')
+                            # print(f'Current weighted centroid: {curr_centroid}')
+                            # print(f'Previous weighted centroid: {prev_centroid}')
+                            # print(f'Displacement: {curr_prev_displacement}')
+                            # print(f'Distance (pixel): {curr_prev_magnitude}')
 
                             # if the magnitude of their displacement vector is less than 120 km in grid cells
                             if curr_prev_magnitude < km:
                                 if test:
                                     print('Distance {0} (pixel) < {1}.'.format(curr_prev_magnitude, km))
-                                else:
-                                    print('Distance {0} (pixel) >= {1}.'.format(curr_prev_magnitude, km))
                                 # update the best matched storm information
                                 max_size = prev_size
                                 best_matched_storm = storm
                             else:
+                                print('Distance {0} (pixel) >= {1}.'.format(curr_prev_magnitude, km))
                                 # otherwise, if the angle between this displacement vector and the previous displacement
                                 # vector associated with that label is less than 120 degrees and it's possible to find
                                 # this angle
                                 if time_index > 1:
                                     predecessor_storms = np.unique(result_data[time_index - 2])
-                                    if np.isin(storm, predecessor_storms):
-
+                                    if np.isin(storm, predecessor_storms): # 如果storm在pred storm里
                                         # compute the displacement between the possible match and its predecessor
                                         predecessor_loc = np.where(result_data[time_index - 2] == storm, 1, 0)
                                         pred_precip = np.where(predecessor_loc == 1, precip_data[time_index - 2], 0)
                                         pred_centroid = center_of_mass(pred_precip)
                                         prev_pred_displacement = displacement(prev_centroid, pred_centroid)
                                         vec_angle = angle(curr_prev_displacement, prev_pred_displacement)
+                                    # 如果不在呢...艹
+                                    else:
+                                        vec_angle = 1
                                 else:
                                     vec_angle = 1
                                 if test:
                                     print(f'Angle: {vec_angle}')
                                 # add the degree threshold in the function input
-                                if vec_angle < degree:    # equivalent to 120 degree direction difference
+                                if vec_angle < degree:  # equivalent to 120 degree direction difference
                                     # update the best matched storm information
                                     if test:
                                         print('Possible match through angle')
@@ -192,15 +197,45 @@ def similarity(curr_label_locs: np.ndarray, prev_storm_locs: np.ndarray, curr_ra
     prev_precip_sum = np.sum(np.where(prev_storm_locs == 1, prev_raw_data, 0))
 
     # find the weight of each cell in both
+    # 对两个storm，计算每个storm内pixel的weighted intensity，其他区域设置为0
     curr_weighted_locs = np.where(curr_label_locs == 1, curr_raw_data / curr_precip_sum, 0)
     prev_weighted_locs = np.where(prev_storm_locs == 1, prev_raw_data / prev_precip_sum, 0)
 
     # turn the label weighting for the current time slice into a 1d array
+    # 提取storm A的所有坐标
     curr_coors = np.argwhere(curr_weighted_locs)
 
     # do the same for the storm weightings in the previous time slice
+    # 提取storm B的所有坐标
     prev_coors = np.argwhere(prev_weighted_locs)
 
+    # 计算pairwise euclidean distance
+    distance = euclidean_distances(curr_coors, prev_coors, squared=True)
+
+    # 按顺序提取A 和B里的intensity weight
+    curr_union_weights = np.zeros(len(curr_coors))
+    prev_union_weights = np.zeros(len(prev_coors))
+
+    for index, coors in enumerate(curr_coors):
+        curr_union_weights[index] = curr_weighted_locs[coors[0]][coors[1]]
+
+    for index, coors in enumerate(prev_coors):
+        prev_union_weights[index] = prev_weighted_locs[coors[0]][coors[1]]
+
+    # 计算weights的X * Y.T
+    curr_prev_weights = np.einsum('i, j -> ij', curr_union_weights, prev_union_weights)
+
+    element_wise_similarity = (np.exp(-1 * phi * distance) * curr_prev_weights)
+
+    # the similarity measure is the sum of the all the cells in this new array
+    similarity_measure = np.sum(element_wise_similarity)
+
+    if test:
+        print(f'Similarity measure: {similarity_measure}')
+
+    return similarity_measure
+
+    """
     # merge the two arrays
     merged_coors = np.concatenate((curr_coors, prev_coors), axis=0)
 
@@ -238,6 +273,7 @@ def similarity(curr_label_locs: np.ndarray, prev_storm_locs: np.ndarray, curr_ra
         print(f'Similarity measure: {similarity_measure}')
 
     return similarity_measure
+    """
 
 
 def displacement(current: np.ndarray, previous: np.ndarray) -> np.array:
