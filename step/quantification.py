@@ -1,7 +1,7 @@
 from collections import defaultdict
 from math import atan, sqrt
 import numpy as np
-
+from scipy.ndimage.measurements import center_of_mass
 
 def quantify(tracked_storms: np.ndarray, precip_data: np.ndarray, lat_data: np.ndarray, long_data: np.ndarray,
              time_interval: float, pixel_size: float) -> tuple:
@@ -81,11 +81,54 @@ def get_duration(storms: np.ndarray, time_interval: float) -> np.ndarray:
     return result
 
 
+def get_size_prj(storms: np.ndarray, grid_cell_degree: float, lat_data: np.ndarray, lon_data: np.ndarray) -> np.ndarray:
+    """
+    Compute the size (km^2) of each storm consider degree conversion
+    :param stroms: the tracked storms returned by the tracking algorithm, given as an array of dimensions
+    Time x Rows x Cols.
+    :param grid_cell_degree: 0.25 degree for ERA5 storms
+    :param lat_data: 经度
+    :param lon_data: 纬度
+    :return: a lifetime x total_storms array where the value found at [y][x] corresponds to the size of the storm at t=y,
+    storm=x. Except in the case of index 0, which is always 0 for any t.
+    """
+    # 创造一个面积矩阵，每个pixel对应该纬度下, 0.25 * 0.25 degree pixel应该有的面积 km^2
+    # 创建meshgrid
+    lon_2, lat_2 = np.meshgrid(lon_data, lat_data)
+    # 计算每个pixel的面积 (km^2)
+    pixel_area = np.cos(lat_2 * np.pi / 180) * 111 * 111 * grid_cell_degree * grid_cell_degree
+
+    # find the number of time slices in the data
+    lifetime = storms.shape[0]
+
+    # TODO: CHANGED TO LEN, NOT SURE HOW WORKING BEFORE
+    # and the number of storms
+    total_storms = len(np.unique(storms))
+
+    # initialize an array with dimensions number of time slices by number of storms
+    result = np.zeros((lifetime, total_storms))
+
+    for time_index in range(lifetime):
+        # find the unique labels
+        labels = np.unique(storms[time_index])
+
+        # for each label that appears in this time slice (that's not the background)
+        for label in labels:
+            if label:
+                # add up its coverage area over the pixel_area_matrix
+                storm_size = np.sum(np.where(storms[time_index] == label, pixel_area, 0))
+
+                # and place it at that correct location in the array to return
+                result[time_index][label] = storm_size
+
+    return result
+
+
 def get_size(storms: np.ndarray, grid_cell_size: float) -> np.ndarray:
     """Computes the size (in the distance unit of grid_cell_size) of each storm across all time slices given.
     :param storms: the tracked storms returned by the tracking algorithm, given as an array of dimensions
     Time x Rows x Cols.
-    :param grid_cell_size: the length/width one grid cell represents in the data, given as a float.
+    :param grid_cell_size: the area one grid cell represents in the data, given as a float.
     :return: a lifetime x total_storms array where the value found at [y][x] corresponds to the size of the storm at t=y,
     storm=x. Except in the case of index 0, which is always 0 for any t.
     """
@@ -165,17 +208,15 @@ def get_average(storms: np.ndarray, precip: np.ndarray) -> np.ndarray:
     return result
 
 
-def get_central_loc(storms: np.ndarray, precip: np.ndarray, lats: np.ndarray, longs: np.ndarray) \
+def get_central_loc(storms: np.ndarray, precip: np.ndarray, lat_data: np.ndarray, lon_data: np.ndarray) \
         -> np.ndarray:
     """Computes the central location on the earth's surface of each storm across all time slices given.
     :param storms: the tracked storms returned by the tracking algorithm, given as an array of dimensions
     Time x Rows x Cols.
     :param precip: the precipitation data corresponding to the tracked storms data, with the same dimensions as
     tracked_storms.
-    :param lats: The latitude data corresponding to each [y][x] in tracked_storms, given as an array of dimensions
-    1 x Rows x Cols.
-    :param longs: The longitude data corresponding to each [y][x] in tracked_storms, given as an array of dimensions
-    1 x Rows x Cols.
+    :param lat_data: lat_data. 1 * lenth array
+    :param lon_data: lon_data 1 * lenth array
     :param size_array: the array returned by get_size(), a lifetime x total_storms array where the value found at [y][x]
     corresponds to the size of the storm at time=y, storm=x.
     :param lifetime: the number of time slices in the data, given as an integer.
@@ -183,6 +224,9 @@ def get_central_loc(storms: np.ndarray, precip: np.ndarray, lats: np.ndarray, lo
     :return: a lifetime x total_storms array where the value found at [y][x] corresponds to the central location of the
     storm at t=y, storm=x. Except in the case of index 0, which is always 0 for any t.
     """
+
+    # create mesh grid of lat and lon data
+    lons, lats = np.meshgrid(lon_data, lat_data)
 
     lifetime = storms.shape[0]
 
@@ -192,9 +236,10 @@ def get_central_loc(storms: np.ndarray, precip: np.ndarray, lats: np.ndarray, lo
     result = np.zeros((lifetime, total_storms)).astype(object)
 
     # create arrays of x, y, and z values for the cartesian grid in R3
-    x_array = np.cos(lats) * np.cos(longs)
-    y_array = np.cos(lats) * np.sin(longs)
-    z_array = np.sin(lats)
+    # np.cos(rad) not degree
+    x_array = np.cos(lats * np.pi / 180) * np.cos(lons * np.pi / 180)
+    y_array = np.cos(lats * np.pi / 180) * np.sin(lons * np.pi / 180)
+    z_array = np.sin(lats * np.pi / 180)
 
     # create an array to hold each central location as we calculate it
     central_location = np.empty(2)
@@ -211,13 +256,13 @@ def get_central_loc(storms: np.ndarray, precip: np.ndarray, lats: np.ndarray, lo
                 sum_precipitation = np.sum(np.where(storms[time_index] == label, precip[time_index], 0))
 
                 # and compute the intensity weighted averages
-                x_avg = np.sum(np.where(storms[time_index] == label, ((x_array[0] * precip[time_index]) /
+                x_avg = np.sum(np.where(storms[time_index] == label, ((x_array * precip[time_index]) /
                                                                       sum_precipitation), 0))
 
-                y_avg = np.sum(np.where(storms[time_index] == label, ((y_array[0] * precip[time_index]) /
+                y_avg = np.sum(np.where(storms[time_index] == label, ((y_array * precip[time_index]) /
                                                                       sum_precipitation), 0))
 
-                z_avg = np.sum(np.where(storms[time_index] == label, ((z_array[0] * precip[time_index]) /
+                z_avg = np.sum(np.where(storms[time_index] == label, ((z_array * precip[time_index]) /
                                                                       sum_precipitation), 0))
 
                 h_avg = sqrt((x_avg ** 2) + (y_avg ** 2))
@@ -225,6 +270,115 @@ def get_central_loc(storms: np.ndarray, precip: np.ndarray, lats: np.ndarray, lo
                 # the central location on earth's surface is given by the following
                 central_location[0] = 2 * atan(y_avg / (sqrt((y_avg ** 2) + (x_avg ** 2)) + x_avg))
                 central_location[1] = 2 * atan(z_avg / (sqrt((z_avg ** 2) + (h_avg ** 2)) + h_avg))
+
+                # and we place it in the appropriate spot in the array
+                result[time_index][label] = central_location
+
+                # reset the central location - this seems to be necessary here
+                central_location = np.zeros(2)
+
+    return result
+
+
+def get_max_intensity(storms: np.ndarray, precip: np.ndarray) -> np.ndarray:
+    """Computes the average intensity of each storm across all time slices given.
+        :param storms: the tracked storms returned by the tracking algorithm, given as an array of dimensions
+        Time x Rows x Cols.
+        :param precip: the precipitation data corresponding to the tracked storms, with the same dimensions as
+        tracked_storms.
+        :return: a lifetime x total_storms array where the value found at [y][x] corresponds to the mean intensity of the
+        storm at t=y, storm=x. Except in the case of index 0, which is always 0 for any t.
+        """
+
+    # find the number of time slices in the data
+    lifetime = storms.shape[0]
+
+    # and the number of storms
+    total_storms = len(np.unique(storms))
+
+    # initialize an array with dimensions number of time slices by number of storms
+    result = np.zeros((lifetime, total_storms))
+
+    for time_index in range(lifetime):
+        # find the unique labels
+        labels = np.unique(storms[time_index])
+
+        # for each label that appears in this time slice (that's not the background)
+        for label in labels:
+
+            if label:
+                # find the precipitation where it appears in the current time slice
+                storm_precip = np.where(storms[time_index] == label, precip[time_index], 0)
+
+                # get the maximum precipitation
+                storm_precip_max = np.max(storm_precip)
+
+                # find the number of grid cells belonging to the storm
+                # storm_size = np.sum(np.where(storms[time_index] == label, 1, 0))
+
+                # find the storm's average precipitation in this time slice
+                # storm_avg = storm_precip_sum / storm_size
+
+                # and store it in the appropriate place in our result array
+                result[time_index][label] = storm_precip_max
+
+    return result
+
+
+def get_central_loc_degree(storms: np.ndarray, precip: np.ndarray, lat_data: np.ndarray, lon_data: np.ndarray) \
+        -> np.ndarray:
+    """计算pixel为单位的storm中心
+    :param storms: the tracked storms returned by the tracking algorithm, given as an array of dimensions
+    Time x Rows x Cols.
+    :param precip: the precipitation data corresponding to the tracked storms data, with the same dimensions as
+    tracked_storms.
+    :param lat_data: lat_data. 1 * lenth array
+    :param lon_data: lon_data 1 * lenth array
+    :param size_array: the array returned by get_size(), a lifetime x total_storms array where the value found at [y][x]
+    corresponds to the size of the storm at time=y, storm=x.
+    :param lifetime: the number of time slices in the data, given as an integer.
+    :param total_storms: the total number of storms INCLUDING the background, given as an integer.
+    :return: a lifetime x total_storms array where the value found at [y][x] corresponds to the central location of the
+    storm at t=y, storm=x. Except in the case of index 0, which is always 0 for any t.
+    """
+
+    # create mesh grid of lat and lon data
+    lon_array, lat_array = np.meshgrid(lon_data, lat_data)
+
+    lifetime = storms.shape[0]
+
+    total_storms = len(np.unique(storms))
+
+    # initialize an array to store our result, but of type object to allow us to store an array in each cell
+    result = np.zeros((lifetime, total_storms)).astype(object)
+
+    # create arrays of x, y, and z values for the cartesian grid in R3
+
+    # create an array to hold each central location as we calculate it
+    central_location = np.empty(2)
+
+    for time_index in range(lifetime):
+        # find the unique labels
+        labels = np.unique(storms[time_index])
+
+        for label in labels:
+            # if the storm exists in this time slice
+            if label:
+
+                # find the sum of the precipitation values belonging to the storm
+                sum_precipitation = np.sum(np.where(storms[time_index] == label, precip[time_index], 0))
+
+                # and its intensity weighted centroid
+                x_avg = np.sum(np.where(storms[time_index] == label, ((lon_array * precip[time_index]) /
+                                                                 sum_precipitation), 0))
+
+                y_avg = np.sum(np.where(storms[time_index] == label, ((lat_array * precip[time_index]) /
+                                                                 sum_precipitation), 0))
+
+
+                # get the corresponding lat and lon data
+                central_location[0] = x_avg
+                central_location[1] = y_avg
 
                 # and we place it in the appropriate spot in the array
                 result[time_index][label] = central_location
