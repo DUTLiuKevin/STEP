@@ -50,7 +50,8 @@ def identify(data: np.ndarray, morph_structure: np.ndarray) -> np.ndarray:
     large_storms = [set() for _ in range(num_time_slices)]
 
     # for each time slice, if the slice originally had any labeled storms
-    for time_index in range(num_time_slices):
+    print("\nStart the first loop.")
+    for time_index in tqdm(range(num_time_slices)):
         num_labels = np.max(label_array[time_index])
         # for each of these labels, check if the label still appears after the erosion
         for storm_segment in range(1, num_labels + 1):
@@ -64,7 +65,8 @@ def identify(data: np.ndarray, morph_structure: np.ndarray) -> np.ndarray:
     large_storm_array = np.zeros((num_time_slices, row, col)).astype(int)
 
     # write in the large storm labels at their appropriate locations
-    for time_index in range(num_time_slices):
+    print("\nStart the second loop.")
+    for time_index in tqdm(range(num_time_slices)):
         for col_index in range(col):
             for row_index in range(row):
                 if label_array[time_index][row_index][col_index] in large_storms[time_index]:
@@ -89,7 +91,8 @@ def identify(data: np.ndarray, morph_structure: np.ndarray) -> np.ndarray:
     perform_connected_components(morphology_array, morphology_array, num_time_slices, connectivity)
 
     # map clustering results onto array of large storms, but only where the storms exist in the original data
-    for time_index in range(num_time_slices):
+    print("\nStart the third loop.")
+    for time_index in tqdm(range(num_time_slices)):
         for storm in np.unique(morphology_array[time_index]):
             if storm:
                 overlap = np.where((large_storm_array[time_index] != 0) & (morphology_array[time_index] == storm),
@@ -110,12 +113,14 @@ def identify(data: np.ndarray, morph_structure: np.ndarray) -> np.ndarray:
     # small_dilated = np.empty((num_time_slices, row, col)).astype(int)
     perform_morph_op(morphology.dilation, small_storm_array, morphology_array, num_time_slices, morph_structure)
     perform_connected_components(morphology_array, morphology_array, num_time_slices, connectivity)
-    for time_index in range(num_time_slices):
+    print("\nStart the forth loop.")
+    for time_index in tqdm(range(num_time_slices)):
         small_storm_array[time_index] = np.where(small_storm_array[time_index] != 0, morphology_array[time_index],
                                                  small_storm_array[time_index])
 
     # find unique labels at each time slice for both large and small storm arrays
-    for time_index in range(num_time_slices):
+    print("\nStart the fifth loop.")
+    for time_index in tqdm(range(num_time_slices)):
         # find the unique labels at each time slice for both large and small storm arrays
         unique_elements_large = np.unique(large_storm_array[time_index])
         unique_elements_small = np.unique(small_storm_array[time_index])
@@ -160,7 +165,8 @@ def identify(data: np.ndarray, morph_structure: np.ndarray) -> np.ndarray:
     # take the results of our almost-connected-component labeling on the small storms and add the
     # largest label in that time slice to it in order to produce a new label to add to the large storm array in the same
     # location there
-    for time_index in range(num_time_slices):
+    print('\nStart the sixth loop.')
+    for time_index in tqdm(range(num_time_slices)):
         largest_storm_label[time_index] = np.max(large_storm_array[time_index])
 
     large_storm_array = np.where((small_storm_array != 0), morphology_array +
@@ -169,8 +175,8 @@ def identify(data: np.ndarray, morph_structure: np.ndarray) -> np.ndarray:
     result = np.empty_like(large_storm_array)
 
     # 8) Relabel the labels in each time slice sequentially from 1:
-
-    for time_index in range(num_time_slices):
+    print('\nStart the seventh loop.')
+    for time_index in tqdm(range(num_time_slices)):
         result[time_index] = relabel_sequential(large_storm_array[time_index])[0]
 
     return result
