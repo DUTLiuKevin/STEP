@@ -44,7 +44,7 @@ def track(labeled_maps: np.ndarray, precip_data: np.ndarray, monthSeq: np.ndarra
     now = datetime.now()
     dt_string = now.strftime("%Y_%m_%d_%H_%M")
     # create a folder to save single run information file
-    log_folder = parent_loc + "//" + dt_string
+    log_folder = os.path.join(parent_loc, dt_string)
     make_folder(log_folder)
     # create a subfolder to save single run output log
     # log_subfolder = log_folder + "//" + "single_run"
@@ -67,7 +67,7 @@ def track(labeled_maps: np.ndarray, precip_data: np.ndarray, monthSeq: np.ndarra
 
     # skip labeling t=0, since it is already labeled correctly
     # for every other time slice
-    for time_index in tqdm(range(1, num_time_slices)):
+    for time_index in range(1, num_time_slices):
 
         # found the month
         month = date[0].month
@@ -293,10 +293,10 @@ def track(labeled_maps: np.ndarray, precip_data: np.ndarray, monthSeq: np.ndarra
     # = datetime.now()
     # dt_string = now.strftime("%Y_%m_%d_%H_%M")
     log_file = dt_string + ".csv"
-    log_dataframe.to_csv(log_folder + "\\" + log_file)
+    log_dataframe.to_csv(os.path.join(log_folder, log_file))
 
     short_log_file = dt_string + "_short.csv"
-    short_log_dataframe.to_csv(log_folder + "\\" + short_log_file)
+    short_log_dataframe.to_csv(os.path.join(log_folder, short_log_file))
     # ensure that we've labeled the storms sequentially
     seq_result = relabel_sequential(result_data)[0]
 
