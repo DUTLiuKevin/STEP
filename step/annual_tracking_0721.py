@@ -299,8 +299,8 @@ def track(labeled_maps: np.ndarray, precip_data: np.ndarray, monthSeq: np.ndarra
     short_log_dataframe.to_csv(os.path.join(log_folder, short_log_file))
     # ensure that we've labeled the storms sequentially
     seq_result = relabel_sequential(result_data)[0]
-
-    return seq_result
+    # 增加一个返回short operaiton record
+    return seq_result, short_log_dataframe
 
 
 def similarity(curr_label_locs: np.ndarray, prev_storm_locs: np.ndarray, curr_raw_data: np.ndarray,
