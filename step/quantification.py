@@ -37,6 +37,54 @@ def quantify(tracked_storms: np.ndarray, precip_data: np.ndarray, lat_data: np.n
     return durations, sizes, averages# , central_locs
 
 
+def get_duration_guo(storms: np.ndarray, time_interval: float) -> np.ndarray:
+    """Computes the duration (in the time unit of time_interval) of each storm across all time slices given.
+    # Guo's version of computing durations
+    :param storms: the tracked storms returned by the tracking algorithm, given as an array of dimensions
+
+    Time x Rows x Cols.
+
+    :param time_interval: the period between temporal 'snapshots', given as a float.
+
+    :return: An array of length equal to the number of tracked storms + 1, where the value at [x] corresponds to
+
+    the duration of the storm x. The index 0 (referring to the background) is always 0 and provided for ease of
+
+    indexing.
+
+    """
+
+    # find the number of time slices in the data
+
+    lifetime = storms.shape[0]
+
+    ls = []
+
+    for time_index in range(lifetime):
+        # compute the labels that appear in that time slice
+
+        curr_labels = np.unique(storms[time_index])
+
+        ls.append(curr_labels)
+
+    # Convert list of different size into a numpy array
+
+    storm_array = np.zeros([len(ls), len(max(ls, key=lambda x: len(x)))])
+
+    for i, j in enumerate(ls):
+        storm_array[i][0:len(j)] = j
+
+    storm_array = np.array(storm_array, dtype=np.int32)
+
+    unique, counts = np.unique(storm_array, return_counts=True)
+
+    counts[0] = 0
+
+    result = counts * time_interval
+
+    return result
+
+
 def get_duration(storms: np.ndarray, time_interval: float) -> np.ndarray:
     """Computes the duration (in the time unit of time_interval) of each storm across all time slices given.
     :param storms: the tracked storms returned by the tracking algorithm, given as an array of dimensions

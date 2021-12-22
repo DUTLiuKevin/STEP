@@ -1,6 +1,4 @@
-# Fix tracking algorithm: 修改similarity计算方法, distance strong threshold = 10 degrees
-
-# annual tracking with different parameters
+# 添加dry_spell_time功能
 
 import copy
 import os
@@ -14,6 +12,7 @@ import pandas as pd
 from datetime import datetime
 from tqdm import tqdm
 
+
 # function to make a folder
 def make_folder(save_path):
     # 创建文件夹
@@ -23,8 +22,9 @@ def make_folder(save_path):
         print("Folder exists.")
 
 
-def track(labeled_maps: np.ndarray, precip_data: np.ndarray, monthSeq: np.ndarray, tau_winter: float, tau_summer: float,
-          phi: float, km: float, ratio_threshold: float, parent_loc: str) -> np.ndarray:
+def track(labeled_maps: np.ndarray, precip_data: np.ndarray, monthSeq: np.ndarray,
+          tau_winter: float, tau_summer: float,
+          phi: float, km: float, ratio_threshold: float, parent_loc: str, dry_spell_time: int) -> np.ndarray:
     """Tracks rainstorm events over time by linking identified storms across consecutive time steps.
     :param monthSeq: 数据的时间轴变量
     :param labeled_maps: the identified storms returned by the identification algorithm, given as an array of
@@ -37,6 +37,7 @@ def track(labeled_maps: np.ndarray, precip_data: np.ndarray, monthSeq: np.ndarra
     :param km: the number of grid cells equivalent to 120km in the maps, given as a float.
     :param degree: the degree of vectors of storms displacement at time t and time t-1, given as a float with unit of rad.
     :param parent_loc: location to save output log file
+    :param dry_spell_time: dry_spell_time时间 (step) 如果dry_spell_time = 1, 则允许未match的storm再向前一个step搜索
     :return: a Time x Rows x Cols array containing the identified storms, now tracked through time.
     """
     # test = True
@@ -50,9 +51,9 @@ def track(labeled_maps: np.ndarray, precip_data: np.ndarray, monthSeq: np.ndarra
     # log_subfolder = log_folder + "//" + "single_run"
     # make_folder(log_subfolder)
     # create a dataframe to save computation data
-    log_dataframe = pd.DataFrame()
+    # log_dataframe = pd.DataFrame()
     # save short report about match
-    short_log_dataframe = pd.DataFrame()
+    # short_log_dataframe = pd.DataFrame()
 
     # change monthseq to pandas dataframe
     date = pd.DatetimeIndex(monthSeq)
@@ -79,11 +80,10 @@ def track(labeled_maps: np.ndarray, precip_data: np.ndarray, monthSeq: np.ndarra
 
         # find the labels for this time index and the labeled storms in the previous time index
         current_labels = np.unique(labeled_maps[time_index])
-        previous_storms = np.unique(result_data[time_index - 1])
+        # 如果 previous storm 没有任何storm， 则只有0， previous_storms = array[0]
 
         # and prepare the corresponding precipitation data
         curr_precip_data = precip_data[time_index]
-        prev_precip_data = precip_data[time_index - 1]
 
         # determine the maximum label already used to avoid collisions
         # 2021/07/23 之前使用过的最大的label, 避免重复使用
@@ -95,14 +95,14 @@ def track(labeled_maps: np.ndarray, precip_data: np.ndarray, monthSeq: np.ndarra
             # print("Time {0} Max label is {1}".format(time_index, max_label_so_far))
         # print("Time {0}".format(time_index))
         # record time index
-        # print("Time slice : {0}".format(time_index + 1))
+        print("Time slice : {0}".format(time_index))
         # then, for each label in current time index (that isn't the background)
         for label in current_labels:
             if label:
 
                 # for testing only
                 # if test:
-                # print(f'Current storm label {0}'.format(label))
+                print(f'Current storm label {0}'.format(label))
 
                 # make sure initially the max storm size and best matched storm are 0
                 max_size = 0
@@ -118,135 +118,47 @@ def track(labeled_maps: np.ndarray, precip_data: np.ndarray, monthSeq: np.ndarra
                 # find the precipitation data at those locations
                 curr_label_precip = np.where(labeled_maps[time_index] == label, curr_precip_data, 0)
 
-
                 # and its intensity weighted centroid
                 curr_centroid = center_of_mass(curr_label_precip)
 
+                # previous_storms = np.unique(result_data[time_index - 1])
+                # prev_precip_data = precip_data[time_index - 1]
+
                 # create a dataframe to store data
-                single_run = pd.DataFrame()
-                single_run['timeslice'] = [time_index] * (previous_storms.shape[0]-1)
-                single_run['curr_id'] = [label] * (previous_storms.shape[0]-1)
-                single_run['curr_size'] = [curr_size] * (previous_storms.shape[0]-1)
-                single_run['prev_id'] = np.zeros((previous_storms.shape[0]-1))
-                single_run['prev_size'] = np.zeros((previous_storms.shape[0]-1))
+                # single_run = pd.DataFrame()
+                # single_run['timeslice'] = [time_index] * (previous_storms.shape[0] - 1)
+                # single_run['curr_id'] = [label] * (previous_storms.shape[0] - 1)
+                # single_run['curr_size'] = [curr_size] * (previous_storms.shape[0] - 1)
+                # single_run['prev_id'] = np.zeros((previous_storms.shape[0] - 1))
+                # single_run['prev_size'] = np.zeros((previous_storms.shape[0] - 1))
+                #
+                # single_run['overlap_ratio'] = np.zeros((previous_storms.shape[0] - 1))
+                # single_run['similarity_ratio'] = np.zeros((previous_storms.shape[0] - 1))
+                # single_run['distance'] = np.zeros((previous_storms.shape[0] - 1))
 
-                single_run['overlap_ratio'] = np.zeros((previous_storms.shape[0]-1))
-                single_run['similarity_ratio'] = np.zeros((previous_storms.shape[0]-1))
-                single_run['distance'] = np.zeros((previous_storms.shape[0]-1))
-
-
-
-                max_ratio = 0
-                prev_size = 0
-
-                # compute overlap area, find the largest overlapping ratio, if the ratio > 0.3, direct match,
-                # else we calculate similarities
-                k = 0
-                for storm in previous_storms:
-                    if storm == 0:
-                        continue
-                    # compute the overlapping area
-                    # find where the storm exists in the appropriate time slice
-                    previous_storm = np.where(result_data[time_index - 1] == storm, 1, 0)
-                    prev_size = np.sum(previous_storm)
-
-
-                    # selected the overlap area of current storm to prev storm
-                    overlap_curr_to_prev = np.where(previous_storm == 1, current_label, 0)
-                    # compute overlapping size
-                    overlap_size_curr_to_prev = np.sum(overlap_curr_to_prev)
-                    overlap_ratio_curr_to_prev = overlap_size_curr_to_prev/curr_size
-
-                    # selected the overlap area of prev to curr
-                    overlap_prev_to_curr = np.where(current_label == 1, previous_storm, 0)
-                    overlap_size_prev_to_curr = np.sum(overlap_prev_to_curr)
-                    overlap_ratio_prev_to_curr = overlap_size_prev_to_curr/prev_size
-
-                    integrated_ratio = overlap_ratio_curr_to_prev + overlap_ratio_prev_to_curr
-
-                    # record the output data
-                    single_run.loc[k, 'prev_id'] = storm
-                    single_run.loc[k, 'prev_size'] = prev_size
-                    single_run.loc[k, 'overlap_ratio'] = integrated_ratio
-                    # add the record to dataframes
-                    # single_run.to_csv(r"E:\Atmosphere\STEP_results\tracking_results\1H\grow_track_r_4_tr_0.5_lowtr_0.03_tau_0.10.05_phi_0.002_km_15\Single_record_output" +\
-                    #                  "\\" + str(label) + "_"+ str(storm) + ".csv")
-
-
-                    # find the largest overlapping ratio
-                    if integrated_ratio > max_ratio:
-                        max_ratio = integrated_ratio
-                        temp_matched_storm = storm
-
-                    k = k + 1
-
-                if max_ratio > ratio_threshold:
-                    best_matched_storm = temp_matched_storm
-                    max_size = prev_size
+                # find the location:
+                # dry_spell_time =1, 则time_index要大于等于2才能向前推两步
+                if time_index >= dry_spell_time + 1:
+                    # back_step = 1, 2 if dry_spell_time = 1
+                    for back_step in np.arange(1, dry_spell_time+2):
+                        print("Match previous storm at {0}".format(time_index - back_step))
+                        max_size, best_matched_storm = previous_strom_match(result_data, precip_data, max_size, best_matched_storm, time_index, back_step, current_label, curr_size,
+                         curr_precip_data, curr_centroid, ratio_threshold, phi, tau, km)
+                        # 如果max_size !=0, 则在这个previous step里找到了match，跳出循环
+                        if max_size:
+                            break
 
                 else:
-
-                    # then for every labeled storm in the previous time index
-                    k = 0
-                    for storm in previous_storms:
-
-                        if storm == 0:  # 如果是背景0 就跳过0并继续
-                            continue
-
-                        # find where the storm exists in the appropriate time slice
-                        previous_storm = np.where(result_data[time_index - 1] == storm, 1, 0)
-
-                        # compute the size of the previous storm
-                        prev_size = np.sum(previous_storm)
-
-                        # if test:
-                        #     print('Compare storm {0} in previous time slice with size {1}'.format(storm, prev_size))
-
-                        # if test:
-                        #     print(f'Possible match size: {prev_size}')
-
-                        # if the storm is not the background and the size of this storm is greater than that of the previous
-                        # best match
-                        if storm and prev_size > max_size:
-
-                            similarity_metric  = similarity(current_label, previous_storm, curr_precip_data, prev_precip_data, phi)
-
-                            single_run.loc[k, 'similarity_ratio'] = similarity_metric
-
-                            # record similarity record
-                            # single_run['similarity'] = similarity_metric
-                            # if their similarity measure is greater than the set tau threshold
-                            if similarity_metric > tau:
-
-                                # find the precipitation data for this storm
-                                prev_storm_precip = np.where(result_data[time_index - 1] == storm, prev_precip_data, 0)
-
-                                # and its intensity-weighted centroid
-                                prev_centroid = center_of_mass(prev_storm_precip)
-
-                                curr_prev_displacement = displacement(curr_centroid, prev_centroid)
-                                curr_prev_magnitude = magnitude(curr_prev_displacement)
-                                single_run.loc[k, 'distance'] = curr_prev_magnitude
-                                # record the distance
-                                # single_run['distance'] = curr_prev_magnitude
-                                # if the magnitude of their displacement vector is less than 120 km in grid cells
-                                if curr_prev_magnitude < km:
-                                    # if test:
-                                        # print('Distance {0} (pixel) < {1}.'.format(curr_prev_magnitude, km))
-                                    # update the best matched storm information
-                                    max_size = prev_size
-                                    best_matched_storm = storm
-
-                                    # print('Distance {0} (pixel) >= {1}.'.format(curr_prev_magnitude, km))
-
-                        k = k + 1
+                    back_step = 1
+                    max_size, best_matched_storm = previous_strom_match(result_data, precip_data, max_size, best_matched_storm, time_index, back_step, current_label, curr_size,
+                         curr_precip_data, curr_centroid, ratio_threshold, phi, tau, km)
                 # if we found matches
                 if max_size:
                     # link the label in the current time slice with the appropriate storm label in the previous
                     result_data[time_index] = np.where(labeled_maps[time_index] == label, best_matched_storm,
                                                        result_data[time_index])
-                    single_run['final_id'] = [best_matched_storm] * (previous_storms.shape[0]-1)
-                    single_run['match_type'] = ['match'] * (previous_storms.shape[0]-1)
+                    # single_run['final_id'] = [best_matched_storm] * (previous_storms.shape[0] - 1)
+                    # single_run['match_type'] = ['match'] * (previous_storms.shape[0] - 1)
 
                     # record the ID
                     # single_run['final_id'] = best_matched_storm
@@ -257,8 +169,8 @@ def track(labeled_maps: np.ndarray, precip_data: np.ndarray, monthSeq: np.ndarra
                     result_data[time_index] = np.where(labeled_maps[time_index] == label, max_label_so_far + 1,
                                                        result_data[time_index])
 
-                    single_run['final_id'] = [max_label_so_far+1] * (previous_storms.shape[0]-1)
-                    single_run['match_type'] = ['new'] * (previous_storms.shape[0]-1)
+                    # single_run['final_id'] = [max_label_so_far + 1] * (previous_storms.shape[0] - 1)
+                    # single_run['match_type'] = ['new'] * (previous_storms.shape[0] - 1)
 
                     # record the ID
                     # single_run['final_id'] = max_label_so_far + 1
@@ -270,22 +182,27 @@ def track(labeled_maps: np.ndarray, precip_data: np.ndarray, monthSeq: np.ndarra
                 # single_run.to_csv(
                 #        log_subfolder + "\\" + "timeslice_" + str(time_index) + "_label_" + str(label) + ".csv")
                 # append single run data
-                log_dataframe = log_dataframe.append(single_run, ignore_index = True)
+                # log_dataframe = log_dataframe.append(single_run, ignore_index=True)
                 # 同时输出一个精简版的record，如果find match则输出match，
-                # 如果没找到就输出最小distance record
-                if max_size:
-                    match_record = single_run[single_run['prev_id'] == best_matched_storm]
-                else:
-                    # 如果满足tau的门槛，输出distance的最小不为0值
-                    if max(single_run['similarity_ratio']) > tau:
-                        distance_metric = single_run.loc[single_run['distance'] != 0, 'distance']
-                        match_record = single_run[single_run['distance'] == distance_metric.min()]
-                        # print(distance_metric.min())
-                    else:
-                        # 如果没满足tau的门槛，输出最大的similarity
-                        match_record = single_run[single_run['similarity_ratio'] == single_run['similarity_ratio'].max()]
+                # if previous_storms.shape[0] == 1:
+                #     # 如果前一次降雨都是0，没有storm识别出来，那么pervious_storm的size是1， 直接跳过
+                #     continue
+                # else:
+                #     # 如果没找到就输出最小distance record
+                #     if max_size:
+                #         match_record = single_run[single_run['prev_id'] == best_matched_storm]
+                #     else:
+                #         # 如果满足tau的门槛，输出distance的最小不为0值
+                #         if max(single_run['similarity_ratio']) > tau:
+                #             # distance_metric = single_run.loc[single_run['distance'] != 0, 'distance']
+                #             # match_record = single_run[single_run['distance'] == distance_metric.min()]
+                #             # print(distance_metric.min())
+                #         else:
+                            # 如果没满足tau的门槛，输出最大的similarity
+                            # match_record = single_run[
+                                # single_run['similarity_ratio'] == single_run['similarity_ratio'].max()]
                         # print(single_run['similarity_ratio'].values)
-                short_log_dataframe = short_log_dataframe.append(match_record, ignore_index = True)
+                # short_log_dataframe = short_log_dataframe.append(match_record, ignore_index=True)
 
                 # if test:
                 #     print(f'{label} matched {best_matched_storm} in time slice {time_index + 1}')
@@ -293,15 +210,15 @@ def track(labeled_maps: np.ndarray, precip_data: np.ndarray, monthSeq: np.ndarra
     # save the record log dataframe
     # = datetime.now()
     # dt_string = now.strftime("%Y_%m_%d_%H_%M")
-    log_file = dt_string + ".csv"
-    log_dataframe.to_csv(os.path.join(log_folder, log_file))
-
-    short_log_file = dt_string + "_short.csv"
-    short_log_dataframe.to_csv(os.path.join(log_folder, short_log_file))
+    # log_file = dt_string + ".csv"
+    # log_dataframe.to_csv(os.path.join(log_folder, log_file))
+    #
+    # short_log_file = dt_string + "_short.csv"
+    # short_log_dataframe.to_csv(os.path.join(log_folder, short_log_file))
     # ensure that we've labeled the storms sequentially
     seq_result = relabel_sequential(result_data)[0]
     # 增加一个返回short operaiton record
-    return seq_result #, short_log_dataframe
+    return seq_result  # , short_log_dataframe
 
 
 def similarity(curr_label_locs: np.ndarray, prev_storm_locs: np.ndarray, curr_raw_data: np.ndarray,
@@ -434,8 +351,9 @@ def angle(vec_one: np.ndarray, vec_two: np.ndarray) -> float:
     return np.arccos(np.dot(vec_one, vec_two) / (np.linalg.norm(vec_one) * np.linalg.norm(vec_two)))
 
 
-def track_backup(labeled_maps: np.ndarray, precip_data: np.ndarray, monthSeq: np.ndarray, tau_winter: float, tau_summer: float,
-          phi: float, km: float, test: bool = False) -> np.ndarray:
+def track_backup(labeled_maps: np.ndarray, precip_data: np.ndarray, monthSeq: np.ndarray, tau_winter: float,
+                 tau_summer: float,
+                 phi: float, km: float, test: bool = False) -> np.ndarray:
     """Tracks rainstorm events over time by linking identified storms across consecutive time steps.
     :param monthSeq: 数据的时间轴变量
     :param labeled_maps: the identified storms returned by the identification algorithm, given as an array of
@@ -506,7 +424,6 @@ def track_backup(labeled_maps: np.ndarray, precip_data: np.ndarray, monthSeq: np
                 # find the precipitation data at those locations
                 curr_label_precip = np.where(labeled_maps[time_index] == label, curr_precip_data, 0)
 
-
                 # and its intensity weighted centroid
                 curr_centroid = center_of_mass(curr_label_precip)
 
@@ -527,12 +444,12 @@ def track_backup(labeled_maps: np.ndarray, precip_data: np.ndarray, monthSeq: np
                     overlap_curr_to_prev = np.where(previous_storm == 1, current_label, 0)
                     # compute overlapping size
                     overlap_size_curr_to_prev = np.sum(overlap_curr_to_prev)
-                    overlap_ratio_curr_to_prev = overlap_size_curr_to_prev/curr_size
+                    overlap_ratio_curr_to_prev = overlap_size_curr_to_prev / curr_size
 
                     # selected the overlap area of prev to curr
                     overlap_prev_to_curr = np.where(current_label == 1, previous_storm, 0)
                     overlap_size_prev_to_curr = np.sum(overlap_prev_to_curr)
-                    overlap_ratio_prev_to_curr = overlap_size_prev_to_curr/prev_size
+                    overlap_ratio_prev_to_curr = overlap_size_prev_to_curr / prev_size
 
                     integrated_ratio = overlap_ratio_curr_to_prev + overlap_ratio_prev_to_curr
 
@@ -569,7 +486,6 @@ def track_backup(labeled_maps: np.ndarray, precip_data: np.ndarray, monthSeq: np
                         # if the storm is not the background and the size of this storm is greater than that of the previous
                         # best match
                         if storm and prev_size > max_size:
-
 
                             # if their similarity measure is greater than the set tau threshold
                             if similarity(current_label, previous_storm, curr_precip_data, prev_precip_data, phi, test) \
@@ -647,3 +563,129 @@ def track_backup(labeled_maps: np.ndarray, precip_data: np.ndarray, monthSeq: np
     seq_result = relabel_sequential(result_data)[0]
 
     return seq_result
+
+
+def previous_strom_match(result_data, precip_data, max_size, best_matched_storm, time_index, back_step, current_label, curr_size,
+                         curr_precip_data, curr_centroid, ratio_threshold, phi, tau, km):
+    """
+    把识别部分单独写出来，用来反复调用
+    :param result_data:
+    :param max_size:存放match的storm size
+    :param best_matched_storm:存放最match的storm id
+    :param time_index:current time step
+    :param back_step:previous time step = time_index - backstep, 指示和前几个step的storm match
+    :param current_label:当前storm的label
+    :param curr_size:当前storm size
+    :param curr_precip_data:当前storm的降水
+    :param curr_centroid:当前storm的中心
+    :param phi:
+    :param tau:
+    :param km:
+    :return:
+    """
+    max_ratio = 0
+    prev_size = 0
+    # get previous storms and prcp data
+    previous_storms = np.unique(result_data[time_index - back_step])
+    prev_precip_data = precip_data[time_index - back_step]
+    # compute overlap area, find the largest overlapping ratio, if the ratio > 0.3, direct match,
+    # else we calculate similarities
+    # k = 0
+    for storm in previous_storms:
+        if storm == 0:
+            continue
+        # compute the overlapping area
+        # find where the storm exists in the appropriate time slice
+        previous_storm = np.where(result_data[time_index - back_step] == storm, 1, 0)
+        prev_size = np.sum(previous_storm)
+
+        # selected the overlap area of current storm to prev storm
+        overlap_curr_to_prev = np.where(previous_storm == 1, current_label, 0)
+        # compute overlapping size
+        overlap_size_curr_to_prev = np.sum(overlap_curr_to_prev)
+        overlap_ratio_curr_to_prev = overlap_size_curr_to_prev / curr_size
+
+        # selected the overlap area of prev to curr
+        overlap_prev_to_curr = np.where(current_label == 1, previous_storm, 0)
+        overlap_size_prev_to_curr = np.sum(overlap_prev_to_curr)
+        overlap_ratio_prev_to_curr = overlap_size_prev_to_curr / prev_size
+
+        integrated_ratio = overlap_ratio_curr_to_prev + overlap_ratio_prev_to_curr
+
+        # record the output data
+        # single_run.loc[k, 'prev_id'] = storm
+        # single_run.loc[k, 'prev_size'] = prev_size
+        # single_run.loc[k, 'overlap_ratio'] = integrated_ratio
+        # add the record to dataframes
+        # single_run.to_csv(r"E:\Atmosphere\STEP_results\tracking_results\1H\grow_track_r_4_tr_0.5_lowtr_0.03_tau_0.10.05_phi_0.002_km_15\Single_record_output" +\
+        #                  "\\" + str(label) + "_"+ str(storm) + ".csv")
+
+        # find the largest overlapping ratio
+        if integrated_ratio > max_ratio:
+            max_ratio = integrated_ratio
+            temp_matched_storm = storm
+
+        # k = k + 1
+
+    if max_ratio > ratio_threshold:
+        best_matched_storm = temp_matched_storm
+        max_size = prev_size
+
+    else:
+
+        # then for every labeled storm in the previous time index
+        # k = 0
+        for storm in previous_storms:
+
+            if storm == 0:  # 如果是背景0 就跳过0并继续
+                continue
+
+            # find where the storm exists in the appropriate time slice
+            previous_storm = np.where(result_data[time_index - back_step] == storm, 1, 0)
+
+            # compute the size of the previous storm
+            prev_size = np.sum(previous_storm)
+
+            # if test:
+            #     print('Compare storm {0} in previous time slice with size {1}'.format(storm, prev_size))
+
+            # if test:
+            #     print(f'Possible match size: {prev_size}')
+
+            # if the storm is not the background and the size of this storm is greater than that of the previous
+            # best match
+            if storm and prev_size > max_size:
+
+                similarity_metric = similarity(current_label, previous_storm, curr_precip_data,
+                                               prev_precip_data, phi)
+
+                # single_run.loc[k, 'similarity_ratio'] = similarity_metric
+
+                # record similarity record
+                # single_run['similarity'] = similarity_metric
+                # if their similarity measure is greater than the set tau threshold
+                if similarity_metric > tau:
+
+                    # find the precipitation data for this storm
+                    prev_storm_precip = np.where(result_data[time_index - back_step] == storm, prev_precip_data, 0)
+
+                    # and its intensity-weighted centroid
+                    prev_centroid = center_of_mass(prev_storm_precip)
+
+                    curr_prev_displacement = displacement(curr_centroid, prev_centroid)
+                    curr_prev_magnitude = magnitude(curr_prev_displacement)
+                    # single_run.loc[k, 'distance'] = curr_prev_magnitude
+                    # record the distance
+                    # single_run['distance'] = curr_prev_magnitude
+                    # if the magnitude of their displacement vector is less than 120 km in grid cells
+                    if curr_prev_magnitude < km:
+                        # if test:
+                        # print('Distance {0} (pixel) < {1}.'.format(curr_prev_magnitude, km))
+                        # update the best matched storm information
+                        max_size = prev_size
+                        best_matched_storm = storm
+
+                        # print('Distance {0} (pixel) >= {1}.'.format(curr_prev_magnitude, km))
+
+            # k = k + 1
+    return max_size, best_matched_storm
